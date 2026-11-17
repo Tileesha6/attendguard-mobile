@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'beacon_test_panel.dart';
 import '../services/backend.dart';
 import '../services/ble_service.dart';
 import '../services/device_id_service.dart';
@@ -16,9 +17,14 @@ class StudentHomeScreen extends StatefulWidget {
   State<StudentHomeScreen> createState() => _StudentHomeScreenState();
 }
 
-class _StudentHomeScreenState extends State<StudentHomeScreen> {
+class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindingObserver {
   final BleService _ble = BleService();
-  StreamSubscription<String>? _beaconSub;
+  StreamSubscription<BeaconDetection>? _beaconSub;
+  StreamSubscription<ScannerStatus>? _scannerStatusSub;
+  final Map<String, BeaconDetection> _recentDetections = {};
+  final Map<String, DateTime> _heardCodes = {};
+  DateTime? _lastDiagnosticsRefresh;
+  DateTime? _lastLookupStartedAt;
   StreamSubscription<List<RecheckRound>>? _roundSub;
   Timer? _clock;
 
@@ -42,11 +48,32 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
   @override
   void initState() {
     super.initState();
-    _beaconSub = _ble.codes.listen(_onBeaconCode);
+    WidgetsBinding.instance.addObserver(this);
+    _beaconSub = _ble.detections.listen(_onBeaconDetection);
+    _scannerStatusSub = _ble.statuses.listen((status) {
+      if (!mounted) return;
+      setState(() {
+        _scanStatus = status.message;
+        _scanError = switch (status.state) {
+          ScannerState.error || ScannerState.bluetoothOff ||
+          ScannerState.permissionDenied || ScannerState.unsupported => status.message,
+          _ => null,
+        };
+      });
+    });
     _clock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
     _boot();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_startScanner());
+    } else if (state == AppLifecycleState.paused) {
+      unawaited(_ble.stop());
+    }
   }
 
   Future<void> _boot() async {
@@ -77,24 +104,48 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
     }
   }
 
-  void _onBeaconCode(String code) {
+  void _onBeaconDetection(BeaconDetection detection) {
     if (!mounted) return;
-    final now = DateTime.now();
-    // Never let an unrecognized nearby beacon overwrite the server-verified
-    // session code used for check-in. Rotation requires a new lookup.
+    final code = detection.code;
+    final now = detection.seenAt;
+    _heardCodes[code] = now;
+    _recentDetections[code] = detection;
+    // Bound memory in a noisy classroom; the BLE marker is not authenticated.
+    if (_recentDetections.length > 40) {
+      final oldest = _recentDetections.entries.reduce((a, b) =>
+        a.value.seenAt.isBefore(b.value.seenAt) ? a : b).key;
+      _recentDetections.remove(oldest);
+    }
+    _heardCodes.removeWhere((_, seen) => now.difference(seen) > const Duration(minutes: 5));
+    _lastLookups.removeWhere((_, seen) => now.difference(seen) > const Duration(minutes: 5));
+    // Show recent live advertisements without rebuilding the UI every 100ms.
+    if (widget.demo &&
+        (_lastDiagnosticsRefresh == null ||
+            now.difference(_lastDiagnosticsRefresh!) > const Duration(milliseconds: 500))) {
+      _lastDiagnosticsRefresh = now;
+      setState(() {});
+    }
+
     if (_currentCode == code) _lastHeardAt = now;
 
-    // A re-check is satisfied only by a NEW advertisement during the round.
+    // The backend also validates the code and round. Never accept an arbitrary
+    // nearby beacon as proof of a successful local-demo re-check.
     final r = _round;
     if (r != null && _marked && !_recheckBusy && !_passedRounds.contains(r.id) &&
-        !now.isBefore(r.openedAt) && now.isBefore(r.closesAt)) {
+        !now.isBefore(r.openedAt) && now.isBefore(r.closesAt) &&
+        (!widget.demo || code == _currentCode)) {
       _confirmRecheck(r, code);
     }
 
     if (_marked || _lookupBusy) return;
+    // Rate-limit across ALL codes, not only repeat codes, to avoid hammering
+    // Firebase when many untrusted beacons are nearby.
+    if (_lastLookupStartedAt != null &&
+        now.difference(_lastLookupStartedAt!) < const Duration(seconds: 1)) return;
     final last = _lastLookups[code];
     if (last != null && now.difference(last) < const Duration(seconds: 10)) return;
     _lastLookups[code] = now;
+    _lastLookupStartedAt = now;
     _lookup(code);
   }
 
@@ -107,6 +158,8 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
         setState(() {
           _session = result;
           _currentCode = code;
+          // The first valid advertisement counts; do not require a second hit.
+          _lastHeardAt = _heardCodes[code];
           _marked = result.alreadyMarked;
           _flagged = false;
           _message = result.alreadyMarked ? 'You have already checked in.' : null;
@@ -194,9 +247,15 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
     }
   }
 
-  void _simulateBeacon() {
-    // Exists ONLY in the demo entrypoint. Production app never exposes the code.
-    if (widget.demo) _onBeaconCode('12345678');
+  void _simulateBeacon([String code = '12345678']) {
+    // Demo APK ONLY: clearly tagged fake reading; never sent to Firebase.
+    if (!widget.demo) return;
+    _onBeaconDetection(BeaconDetection(
+      code: code,
+      seenAt: DateTime.now(),
+      deviceName: 'LOCAL SIMULATOR',
+      simulated: true,
+    ));
   }
 
   void _simulateRound() {
@@ -211,7 +270,9 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _beaconSub?.cancel();
+    _scannerStatusSub?.cancel();
     _roundSub?.cancel();
     _clock?.cancel();
     unawaited(_ble.dispose());
@@ -243,8 +304,15 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 if (widget.demo) _notice('LOCAL TEST MODE — no Firebase attendance is recorded.', Colors.orange.shade900),
                 if (_tab == 0) _buildHome(context),
-                if (_tab == 1) _buildHistory(context),
-                if (_tab == 2) _buildSettings(context),
+                if (widget.demo && _tab == 1) BeaconTestPanel(
+                  detections: (_recentDetections.values.toList()
+                    ..sort((a, b) => b.seenAt.compareTo(a.seenAt)))
+                    .take(15).toList(),
+                  status: _scanStatus,
+                  onSimulate: _simulateBeacon,
+                ),
+                if (_tab == (widget.demo ? 2 : 1)) _buildHistory(context),
+                if (_tab == (widget.demo ? 3 : 2)) _buildSettings(context),
               ]),
             ),
           ),
@@ -270,7 +338,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
                     const CircularProgressIndicator(color: Colors.greenAccent),
                     if (widget.demo) ...[
                       const SizedBox(height: 25),
-                      FilledButton(onPressed: _simulateBeacon, child: const Text('Simulate beacon (local only)')),
+                      FilledButton(onPressed: () => _simulateBeacon(), child: const Text('Simulate beacon (local only)')),
                     ],
                   ]),
                 ),
@@ -282,10 +350,11 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.history), label: 'Attendance'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
+        destinations: [
+          const NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          if (widget.demo) const NavigationDestination(icon: Icon(Icons.bluetooth_searching), label: 'BLE Test'),
+          const NavigationDestination(icon: Icon(Icons.history), label: 'Attendance'),
+          const NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
         ],
       ),
     );
@@ -310,14 +379,14 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
             Text(_scanError!, style: const TextStyle(color: Colors.red)),
             const SizedBox(height: 10),
             OutlinedButton.icon(onPressed: _startScanner,
-              icon: const Icon(Icons.refresh), label: const Text('Retry scanning')),
+              icon: const Icon(Icons.refresh), label: const Text('Retry Bluetooth scan')),
           ] else ...[
             const SizedBox(height: 12),
             const LinearProgressIndicator(minHeight: 3),
           ],
           if (widget.demo) ...[
             const SizedBox(height: 15),
-            OutlinedButton.icon(onPressed: _simulateBeacon,
+            OutlinedButton.icon(onPressed: () => _simulateBeacon(),
               icon: const Icon(Icons.science_outlined), label: const Text('Simulate beacon (test only)')),
           ],
         ],
@@ -393,7 +462,11 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
           subtitle: Text(_scanStatus)),
         const Divider(height: 1),
         const ListTile(leading: Icon(Icons.security), title: Text('Privacy'),
-          subtitle: Text('No live session code is shown. Attendance writes are server-verified.')),
+          subtitle: Text('Live student screens hide the code. Firebase must validate attendance.')),
+        const Divider(height: 1),
+        const ListTile(leading: Icon(Icons.admin_panel_settings_outlined),
+          title: Text('Beacon administration'),
+          subtitle: Text('Codes are generated by the server and sent by the lecturer dashboard over USB. Phone-based code changes are not supported.')),
       ])),
       const SizedBox(height: 12),
       if (!widget.demo)

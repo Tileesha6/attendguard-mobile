@@ -1,32 +1,27 @@
-# Initial source audit (2026-11-17)
+# AttendGuard source audit — BLE test update
 
-## What was reviewed
+Checked: 2026-11-17
 
-- All files included in this public GitHub starter package.
-- Secret file names, `.env` paths, known token patterns and private-key headers.
-- Android BLE permissions patch, GitHub Actions YAML structure and the test-mode
-  separation from Firebase-backed attendance.
-- Source-level use of the manufacturer-data format from the project handoff.
+## Static checks completed
 
-## Findings
+- Inspected source files in the existing public GitHub starter, including `.github/workflows`, Dart screens/services and the Android permissions patch.
+- Updated demo and live GitHub workflows to Java 21 and `permission_handler:12.0.3`, matching the user's previous CI fixes.
+- Included no `.env`, keystore, Firebase service account, `google-services.json`, credentials, or API token in this project ZIP.
+- Ran `python3 scripts/check_public_repo.py` on the updated source; no matched credentials or disallowed files.
+- Tested the BLE manufacturer payload arithmetic with sample codes `12345678` and `87654321` using a local Python fixture. Flutter parser and BLE Test widget tests are included, but **Flutter tests have not been run here**.
 
-- **No real API credentials, `.env` files, signing keys or service account JSON
-  files are present in this release package.**
-- A `.gitignore` blocks common local secrets from ordinary Git commits.
-- Both GitHub Actions workflows run a credential-pattern check before building.
-- The demo target cannot write attendance to Firebase: it uses a deliberately
-  fake backend. Live mode uses callable Cloud Functions with Firebase Auth.
-- Test included for the advertised 8-digit BLE sample and leading zero padding.
+## Caveats
 
-## Honest limitations
+- This is a static packaging audit only. It is **not** a guarantee that no API secrets could ever be leaked or that all code paths are vulnerability-free.
+- Flutter/Dart SDK and a real Android device were not available in this container. **No APK was compiled or installed.** GitHub Actions must verify compilation and device tests must verify actual detection and OS Bluetooth prompts.
+- Firebase client configuration passed through dart-defines is extractable from an APK; that is normal for mobile clients. Real security must be enforced with Firebase Auth, server-side Cloud Functions validation and Firestore rules.
+- Debug APK reveals received BLE codes. **Do not distribute it as the production attendance client.** The live application intentionally hides the code.
+- The Android system requests consent to enable Bluetooth. The app cannot force Bluetooth on without permission.
+- The source `0xFFFF` manufacturer ID is reserved for prototyping and does not authenticate the ESP32 itself.
 
-- Static scans detect common issues, not every secret format or vulnerability.
-- There is no Flutter/Android SDK in this authoring environment, so this release
-  **has not been compiled on Android or verified on a phone**. The uploaded
-  GitHub Actions workflow performs the first actual package installation,
-  parser unit tests and APK compilation. If Actions reports an error, fix it
-  before describing the APK as working.
-- Real Firebase login, database rules and Cloud Functions must be provided
-  and tested by the backend team. A repository can be secret-free while the
-  deployed backend still has unsafe permissions; backend review is separate.
-- BLE broadcasting is proximity evidence, not relay-proof location attestation.
+## Confirmation needed on GitHub
+
+1. The public repository check passes on updated code.
+2. The Flutter parser tests pass.
+3. The release APK builds successfully with Java 21 on the runner.
+4. A real Android phone shows the requested Bluetooth enable prompt and receives code from the ESP32 (not merely a mock code).
