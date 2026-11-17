@@ -1,4 +1,4 @@
-name: Build AttendGuard demo APK
+name: Build AttendGuard ESP32 hardware test APK
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  android-demo:
+  android-hardware-test:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -37,10 +37,10 @@ jobs:
           cp -R test/. build_project/test/
           rm -f build_project/test/widget_test.dart
 
-      - name: Install Flutter packages and Android BLE permissions
+      - name: Install BLE-only packages and Android permissions (no Firebase needed)
         working-directory: build_project
         run: |
-          flutter pub add firebase_core firebase_auth cloud_firestore cloud_functions flutter_blue_plus permission_handler:12.0.3 device_info_plus flutter_secure_storage flutter_riverpod android_id crypto uuid
+          flutter pub add flutter_blue_plus permission_handler:12.0.3 device_info_plus
           python3 ../scripts/patch_android.py
           flutter pub get
 
@@ -48,14 +48,14 @@ jobs:
         working-directory: build_project
         run: flutter test
 
-      - name: Build installable APK (LOCAL TEST ONLY)
+      - name: Build real BLE scanner APK (NO SIMULATOR)
         working-directory: build_project
-        run: flutter build apk --release -t lib/main_demo.dart
+        run: flutter build apk --release -t lib/main_hardware_test.dart
 
-      - name: Upload demo APK
+      - name: Upload hardware-test APK
         uses: actions/upload-artifact@v4
         with:
-          name: AttendGuard-demo-APK
+          name: AttendGuard-ESP32-Hardware-Test-APK
           path: build_project/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7

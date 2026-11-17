@@ -37,11 +37,26 @@ Future<void> main() async {
     return;
   }
 
-  await Firebase.initializeApp(options: const FirebaseOptions(
-    apiKey: firebaseApiKey,
-    appId: firebaseAppId,
-    messagingSenderId: firebaseMessagingSenderId,
-    projectId: firebaseProjectId,
-  ));
+  try {
+    await Firebase.initializeApp(options: const FirebaseOptions(
+      apiKey: firebaseApiKey,
+      appId: firebaseAppId,
+      messagingSenderId: firebaseMessagingSenderId,
+      projectId: firebaseProjectId,
+    ));
+  } catch (error) {
+    runApp(MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(body: Center(child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text('Firebase could not start. Check the Android Firebase app ID, '
+            'API key, project ID, and Internet connection.\n\n$error',
+            textAlign: TextAlign.center),
+      ))),
+    ));
+    return;
+  }
+  // This is the LIVE application: Firebase Auth and callable functions only.
+  // DemoAttendanceBackend is never selected by this entrypoint.
   runApp(const ProviderScope(child: AttendanceApp(demo: false)));
 }

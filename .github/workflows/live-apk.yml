@@ -1,4 +1,4 @@
-name: Build AttendGuard live APK (Firebase)
+name: Build AttendGuard REAL attendance APK (Firebase)
 
 on:
   workflow_dispatch:
@@ -75,7 +75,7 @@ jobs:
       - name: Upload live APK
         uses: actions/upload-artifact@v4
         with:
-          name: AttendGuard-live-APK
+          name: AttendGuard-REAL-Attendance-APK
           path: build_project/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7

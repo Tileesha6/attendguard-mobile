@@ -1,27 +1,20 @@
-# AttendGuard source audit — BLE test update
+# AttendGuard release preparation review — 2026-11-17
 
-Checked: 2026-11-17
+## Confirmed from source inspection
 
-## Static checks completed
+- The Flutter **live** entrypoint `lib/main.dart` chooses `AttendanceApp(demo: false)` and uses Firebase Auth and the `FirebaseAttendanceBackend` callable functions. It does **not** call the fake attendance backend.
+- The Android **hardware-test** entrypoint `lib/main_hardware_test.dart` reads the actual `BleService.detections` stream. It has no simulated code generator, Firebase dependency, or fake attendance action.
+- GitHub Actions builds the actual ESP32 hardware test APK on push using BLE-only dependencies (no Firebase plugin or mock attendance), and a separate real Firebase APK with the four GitHub Secrets on manual dispatch.
+- Bluetooth protocol checks manufacturer ID `0xFFFF`, payload marker `0xA7`, and four-byte unsigned big-endian session code.
+- The public-source secret scanner should be run on every change. It scans for secret-looking tokens and unsafe files, but no scanner can guarantee that every sensitive value is caught.
 
-- Inspected source files in the existing public GitHub starter, including `.github/workflows`, Dart screens/services and the Android permissions patch.
-- Updated demo and live GitHub workflows to Java 21 and `permission_handler:12.0.3`, matching the user's previous CI fixes.
-- Included no `.env`, keystore, Firebase service account, `google-services.json`, credentials, or API token in this project ZIP.
-- Ran `python3 scripts/check_public_repo.py` on the updated source; no matched credentials or disallowed files.
-- Tested the BLE manufacturer payload arithmetic with sample codes `12345678` and `87654321` using a local Python fixture. Flutter parser and BLE Test widget tests are included, but **Flutter tests have not been run here**.
+## Not verified in this environment
 
-## Caveats
+- Native Flutter/Gradle compilation and signing of these APKs (no Flutter SDK is installed here).
+- Operation of real ESP32 hardware or Android BLE permissions on the user's physical phone.
+- Firebase deployment and rule enforcement (Firebase project details were not supplied).
+- End-to-end attendance and re-check flow on the actual team backend.
 
-- This is a static packaging audit only. It is **not** a guarantee that no API secrets could ever be leaked or that all code paths are vulnerability-free.
-- Flutter/Dart SDK and a real Android device were not available in this container. **No APK was compiled or installed.** GitHub Actions must verify compilation and device tests must verify actual detection and OS Bluetooth prompts.
-- Firebase client configuration passed through dart-defines is extractable from an APK; that is normal for mobile clients. Real security must be enforced with Firebase Auth, server-side Cloud Functions validation and Firestore rules.
-- Debug APK reveals received BLE codes. **Do not distribute it as the production attendance client.** The live application intentionally hides the code.
-- The Android system requests consent to enable Bluetooth. The app cannot force Bluetooth on without permission.
-- The source `0xFFFF` manufacturer ID is reserved for prototyping and does not authenticate the ESP32 itself.
+## Required signoff
 
-## Confirmation needed on GitHub
-
-1. The public repository check passes on updated code.
-2. The Flutter parser tests pass.
-3. The release APK builds successfully with Java 21 on the runner.
-4. A real Android phone shows the requested Bluetooth enable prompt and receives code from the ESP32 (not merely a mock code).
+A green GitHub Actions build, a real code received from ESP32, and a Firebase-backed check-in visible on the lecturer's dashboard are the acceptance criteria. Do not present the hardware-test APK as a final, server-connected attendance system.

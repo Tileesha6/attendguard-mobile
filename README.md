@@ -1,29 +1,22 @@
-# AttendGuard — Mobile app (BLE hardware-test update)
+# AttendGuard — Real Android attendance app
 
-**Hackathon Android source.** The local APK can scan real ESP32 manufacturer BLE advertisements offline. No committed credentials or `.env` files. [Read the full change list](CHANGES_V2.md).
+This repository contains the **real Flutter student app**, not just a demo UI. The app is ready to connect to the team's Firebase backend and ESP32 hardware.
 
-## Fast track: update your existing GitHub repository
+**Read [SHIP_REAL_APP.md](SHIP_REAL_APP.md) for the Thursday deployment checklist and exact Windows PowerShell commands.**
 
-Download `AttendGuard_Changes_Only.zip` and follow **[UPDATE_FROM_POWERSHELL.md](UPDATE_FROM_POWERSHELL.md)**. This preserves your existing repo and lets GitHub Actions build the test APK.
+## Two build targets, two separate purposes
 
-## What the test APK does
+- **ESP32 Hardware Test APK** (`lib/main_hardware_test.dart`, automatic build on push): scans **real** Bluetooth manufacturer advertisements, shows received 8-digit codes and RSSI, works offline. No simulated codes and no attendance claims.
+- **REAL Firebase Attendance APK** (`lib/main.dart`, manually triggered): Firebase Authentication, Bluetooth scanning, server-verified class lookup, check-in via callable Cloud Functions, 60-second re-check confirmation, student device binding. Requires team backend and Firebase configuration.
 
-- Requests Android Nearby Devices permission and, when Bluetooth is off, requests system approval to enable it (not silent).
-- Automatically scans while the app is in the foreground; restarts on return to the foreground.
-- Detects **any** valid ESP32 code matching manufacturer ID `0xFFFF`, marker `0xA7`, and 4 big-endian bytes.
-- Displays the code, RSSI, and detection time in a **BLE Test** tab, with explicit real-vs-simulated labels.
-- Supports manual code simulation for interface testing only; it **does not modify ESP32 or Firebase**.
-- Shows a mock course and fake Mark Present to demonstrate student UX. It never records real attendance.
+The source also includes an older `main_demo.dart` for internal UI prototyping, but **neither shipping workflow uses it**. Do not install it as the final app.
 
-## What the real Firebase app does
+The ESP32 and protocol are documented in [BEACON_AND_BACKEND_CONTRACT.md](BEACON_AND_BACKEND_CONTRACT.md). GitHub CI uses Java 21 and a compatible `permission_handler` version. The phone must be a real Android device with BLE capabilities.
 
-The `lib/main.dart` entrypoint uses the team's Firebase callable functions to look up and verify the session, enrolled student and device binding. The live app hides raw codes. Backend deployment and authentication are separate responsibilities; see [BEACON_AND_BACKEND_CONTRACT.md](BEACON_AND_BACKEND_CONTRACT.md).
+## Public repository precautions
 
-## What the mobile app cannot do
+No `.env`, Firebase Admin credentials, keystores, or private keys should be uploaded. Run `py scripts/check_public_repo.py` before pushing, and examine `git diff --cached --name-only`. Firebase API keys included in an Android APK are **public client configuration**; authorization must be enforced by Firebase Security Rules and Cloud Functions. See [SECURITY.md](SECURITY.md).
 
-The ESP32 broadcast code is changed by the **lecturer dashboard over USB Serial**, not by the student app. A secure phone-based admin controller would need authenticated server actions and a new transport to the beacon. We have not added a fake admin password or insecure client-side code override.
+## Server expectations
 
-## Security and builds
-
-GitHub Actions uses Java **21** and `permission_handler:12.0.3` (matching the dependency and Android Lint fixes). A successful GitHub build and a hardware test on your Android phone are still needed — these have **not** been run here. Read **SECURITY.md**, **CHANGES_V2.md**, and **UPDATE_FROM_POWERSHELL.md** before publishing.
-
+The backend team must deploy the authenticated callable functions `lookupSession`, `markPresent`, `confirmRecheck` and rules for `sessions/{id}/rounds`. The lecturer dashboard starts sessions and sends the random code over USB to the ESP32. If these are not live, the mobile app **cannot honestly claim to record attendance**. The BLE hardware tester can still validate the antenna, BLE permissions, and manufacturer payload.
