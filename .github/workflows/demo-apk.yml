@@ -40,7 +40,7 @@ jobs:
       - name: Install Flutter packages and Android BLE permissions
         working-directory: build_project
         run: |
-          flutter pub add firebase_core firebase_auth cloud_firestore cloud_functions flutter_blue_plus permission_handler device_info_plus flutter_secure_storage flutter_riverpod android_id crypto uuid
+          flutter pub add firebase_core firebase_auth cloud_firestore cloud_functions flutter_blue_plus permission_handler:12.0.3 device_info_plus flutter_secure_storage flutter_riverpod android_id crypto uuid
           python3 ../scripts/patch_android.py
           flutter pub get
 
