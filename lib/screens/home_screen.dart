@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/material.dart';
 
 import 'beacon_test_panel.dart';
@@ -9,9 +10,10 @@ import '../services/ble_service.dart';
 import '../services/device_id_service.dart';
 
 class StudentHomeScreen extends StatefulWidget {
-  const StudentHomeScreen({super.key, required this.backend, required this.demo});
+  const StudentHomeScreen({super.key, required this.backend, required this.demo, this.directMode = false});
   final AttendanceBackend backend;
   final bool demo;
+  final bool directMode;
 
   @override
   State<StudentHomeScreen> createState() => _StudentHomeScreenState();
@@ -19,6 +21,9 @@ class StudentHomeScreen extends StatefulWidget {
 
 class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindingObserver {
   final BleService _ble = BleService();
+  final _nameController = TextEditingController();
+  final _studentIdController = TextEditingController();
+  final _profileStorage = const FlutterSecureStorage();
   StreamSubscription<BeaconDetection>? _beaconSub;
   StreamSubscription<ScannerStatus>? _scannerStatusSub;
   final Map<String, BeaconDetection> _recentDetections = {};
@@ -77,6 +82,17 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
   }
 
   Future<void> _boot() async {
+    if (widget.directMode) {
+      try {
+        final name = await _profileStorage.read(key: 'spark_student_name');
+        final studentId = await _profileStorage.read(key: 'spark_student_id');
+        if (!mounted) return;
+        _nameController.text = name ?? '';
+        _studentIdController.text = studentId ?? '';
+      } catch (_) {
+        // Storage is optional; input fields still work if storage is unavailable.
+      }
+    }
     try {
       final id = await DeviceIdService.getId();
       if (!mounted) return;
@@ -152,7 +168,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
   Future<void> _lookup(String code) async {
     _lookupBusy = true;
     try {
-      final result = await widget.backend.lookupSession(code);
+      final result = await widget.backend.lookupSession(code, deviceId: _deviceId);
       if (!mounted) return;
       if (result != null) {
         setState(() {
@@ -162,7 +178,9 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
           _lastHeardAt = _heardCodes[code];
           _marked = result.alreadyMarked;
           _flagged = false;
-          _message = result.alreadyMarked ? 'You have already checked in.' : null;
+          _message = result.alreadyMarked
+              ? (widget.directMode ? 'This phone has already been used for this session.' : 'You have already checked in.')
+              : null;
           _scanStatus = 'Classroom beacon detected';
         });
         if (result.alreadyMarked) _listenForRounds(result.sessionId);
@@ -175,6 +193,10 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
   }
 
   Future<void> _mark() async {
+    if (widget.directMode && _nameController.text.trim().isEmpty) {
+      setState(() => _message = 'Enter your student name first.');
+      return;
+    }
     if (_session == null || _currentCode == null || _deviceId == null || _markBusy) return;
     if (_lastHeardAt == null || DateTime.now().difference(_lastHeardAt!) > const Duration(seconds: 15)) {
       setState(() => _message = 'Beacon signal is outdated. Move closer to the classroom device.');
@@ -186,7 +208,17 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
         sessionId: _session!.sessionId,
         code: _currentCode!,
         deviceId: _deviceId!,
+        studentName: _nameController.text.trim(),
+        studentId: _studentIdController.text.trim(),
       );
+      if (widget.directMode && status == 'present') {
+        try {
+          await _profileStorage.write(key: 'spark_student_name', value: _nameController.text.trim());
+          await _profileStorage.write(key: 'spark_student_id', value: _studentIdController.text.trim());
+        } catch (_) {
+          // Check-in has already been committed; local profile storage is optional.
+        }
+      }
       if (!mounted) return;
       setState(() {
         _flagged = status == 'flagged';
@@ -206,6 +238,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
   }
 
   void _listenForRounds(String sessionId) {
+    if (widget.directMode) return; // New Spark contract has no re-check rounds.
     _roundSub?.cancel();
     _roundSub = widget.backend.watchRounds(sessionId).listen((rounds) {
       if (!mounted) return;
@@ -275,6 +308,8 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
     _scannerStatusSub?.cancel();
     _roundSub?.cancel();
     _clock?.cancel();
+    _nameController.dispose();
+    _studentIdController.dispose();
     unawaited(_ble.dispose());
     super.dispose();
   }
@@ -291,7 +326,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
         title: const Text('AttendGuard', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFFF6F8F8),
         actions: [
-          if (!widget.demo)
+          if (!widget.demo && !widget.directMode)
             IconButton(tooltip: 'Sign out', onPressed: () => FirebaseAuth.instance.signOut(),
               icon: const Icon(Icons.logout)),
         ],
@@ -392,6 +427,34 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
         ],
       ))),
       const SizedBox(height: 18),
+      if (widget.directMode) ...[
+        Text('Student details', style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w600)),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _nameController,
+          maxLength: 100,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Student name *',
+            hintText: 'Enter your full name',
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _studentIdController,
+          maxLength: 60,
+          decoration: const InputDecoration(
+            labelText: 'Student ID (optional)',
+            hintText: 'e.g. IT260001',
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text('Spark demonstration mode: attendance uses an editable name and '
+            'install-specific device ID. It does not guarantee identity or physical presence.',
+          style: TextStyle(fontSize: 12, color: Colors.blueGrey)),
+        const SizedBox(height: 14),
+      ],
       if (_session == null)
         Card(child: Padding(padding: const EdgeInsets.all(25), child: Column(children: [
           const Icon(Icons.radar_outlined, size: 64, color: Colors.grey),
@@ -469,7 +532,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> with WidgetsBindi
           subtitle: Text('Codes are generated by the server and sent by the lecturer dashboard over USB. Phone-based code changes are not supported.')),
       ])),
       const SizedBox(height: 12),
-      if (!widget.demo)
+      if (!widget.demo && !widget.directMode)
         OutlinedButton.icon(onPressed: () => FirebaseAuth.instance.signOut(),
           icon: const Icon(Icons.logout), label: const Text('Sign out')),
     ],

@@ -8,6 +8,12 @@ import 'services/backend.dart';
 
 final authStateProvider = StreamProvider<User?>((ref) => FirebaseAuth.instance.authStateChanges());
 
+/// The hackathon's Spark build defaults to the team leader's direct Firestore
+/// contract. Set --dart-define=ATTENDANCE_BACKEND_MODE=callable to use the
+/// original authenticated Cloud Functions backend on a compatible project.
+const directFirestoreMode =
+    String.fromEnvironment('ATTENDANCE_BACKEND_MODE', defaultValue: 'direct') == 'direct';
+
 class AttendanceApp extends ConsumerWidget {
   const AttendanceApp({super.key, required this.demo});
   final bool demo;
@@ -32,13 +38,19 @@ class AttendanceApp extends ConsumerWidget {
       theme: theme,
       home: demo
           ? StudentHomeScreen(backend: DemoAttendanceBackend(), demo: true)
-          : ref.watch(authStateProvider).when(
-              loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
-              error: (e, _) => Scaffold(body: Center(child: Text('Authentication error: $e'))),
-              data: (user) => user == null
-                  ? const LoginScreen()
-                  : StudentHomeScreen(backend: FirebaseAttendanceBackend(), demo: false),
-            ),
+          : directFirestoreMode
+              ? StudentHomeScreen(
+                  backend: DirectFirestoreAttendanceBackend(),
+                  demo: false,
+                  directMode: true,
+                )
+              : ref.watch(authStateProvider).when(
+                  loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+                  error: (e, _) => Scaffold(body: Center(child: Text('Authentication error: $e'))),
+                  data: (user) => user == null
+                      ? const LoginScreen()
+                      : StudentHomeScreen(backend: FirebaseAttendanceBackend(), demo: false),
+                ),
     );
   }
 }

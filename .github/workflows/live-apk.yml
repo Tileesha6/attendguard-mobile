@@ -32,6 +32,18 @@ jobs:
             fi
           done
 
+      - name: Check target project and Android app identity
+        shell: bash
+        run: |
+          if [[ "$FIREBASE_PROJECT_ID" != "iteration-346ad" ]]; then
+            echo "Firebase project must match lecturer dashboard: iteration-346ad"
+            exit 1
+          fi
+          if [[ "$FIREBASE_APP_ID" != *":android:"* ]]; then
+            echo "FIREBASE_APP_ID must be a registered Android app ID (not :web:)."
+            exit 1
+          fi
+
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
@@ -70,7 +82,8 @@ jobs:
             --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
             --dart-define=FIREBASE_APP_ID="$FIREBASE_APP_ID" \
             --dart-define=FIREBASE_SENDER_ID="$FIREBASE_SENDER_ID" \
-            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID"
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+            --dart-define=ATTENDANCE_BACKEND_MODE=direct
 
       - name: Upload live APK
         uses: actions/upload-artifact@v4
